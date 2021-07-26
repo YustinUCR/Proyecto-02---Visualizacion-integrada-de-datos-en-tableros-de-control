@@ -1,0 +1,296 @@
+#Librerias
+
+library(flexdashboard)
+library(raster)
+library(dplyr)
+library(sf)
+library(DT)
+library(plotly)
+library(leafem)
+library(leaflet)
+library(leaflet.extras)
+library(RColorBrewer)
+library(rmapshaper)
+
+
+
+# Lectura de datos de orquideas
+
+orq <-
+  st_read(
+    "https://raw.githubusercontent.com/gf0604-procesamientodatosgeograficos/2021i-datos/main/gbif/orchidaceae-cr-registros.csv",
+    options = c(
+      "X_POSSIBLE_NAMES=decimalLongitude",
+      "Y_POSSIBLE_NAMES=decimalLatitude"
+    ),
+    quiet = TRUE
+  )
+
+# Lectura de capas geoespaciales de provincias y cantones
+
+cantones <-
+  st_read("https://raw.githubusercontent.com/gf0604-procesamientodatosgeograficos/2021i-datos/main/ign/delimitacion-territorial-administrativa/cr_cantones_simp_wgs84.geojson",
+          quiet = TRUE)
+provincias <-
+  st_read("https://raw.githubusercontent.com/gf0604-procesamientodatosgeograficos/2021i-datos/main/ign/delimitacion-territorial-administrativa/cr_provincias_simp_wgs84.geojson",
+          quiet = TRUE)
+
+
+# Cruce espacial entre las capas y asignación de sistema de proyección a las orquideas
+
+st_crs(orq) = 4326
+
+orq <- 
+  orq %>%
+  st_join(cantones["canton"]) %>%
+  st_join(provincias["provincia"])
+
+
+# Limpieza de los valores
+
+orq <- 
+  orq %>%
+  mutate(coordinateUncertaintyInMeters = as.numeric(coordinateUncertaintyInMeters)) %>%
+  mutate(eventDate = as.Date(eventDate, "%Y-%m-%d"))
+
+# Limpieza de los valores de alta incertidumbre (<1000)
+orq <-
+  orq %>%
+  dplyr::filter(!is.na(coordinateUncertaintyInMeters) & coordinateUncertaintyInMeters <= 1000)
+
+# Data table
+
+orq %>%
+  st_drop_geometry() %>%
+  select(species, stateProvince, canton, eventDate) %>%
+  datatable(colnames = c(
+    "Especie",
+    "Provincia",
+    "Cantón",
+    "Fecha"), 
+    options = list(searchHighlight = TRUE,
+                   language = list(url = '//cdn.datatables.net/plug-ins/1.10.25/i18n/Spanish.json'),
+                   pageLength = 10),
+    class = 'cell-border stripe'
+  )
+
+
+# Creacion del grafico de pastel 
+
+
+# Especies con mayor cantidad de registros
+
+orq_max_registros <-
+  orq %>%
+  st_drop_geometry() %>%
+  filter(!is.na(species) & species != "") %>%
+  group_by(species) %>%
+  summarise(registros = n()) %>%
+  arrange(desc(registros)) %>%
+  slice(1:10) 
+
+otros_registros <-
+  orq %>% 
+  st_drop_geometry() %>%
+  filter(!is.na(species) & species != "") %>%
+  group_by(species) %>% 
+  summarise(registros = n()) %>%
+  arrange(desc(registros)) %>%
+  slice(11:232) %>%
+  group_by(species = as.character("Otros")) %>%
+  summarise(registros = sum(registros))
+
+conjunto_orquideas <-
+  merge(orq_max_registros, otros_registros, all = TRUE) 
+
+
+pal_plotly <- c("#ffd700", "#0059cf", "#008024", "#0000bf", "#ba151b",
+                "#00a1b3", "#ff7300", "#42087b", "#60BC83", "#1C2DAA")
+
+# Grafico
+
+plot_ly(conjunto_orquideas, labels =  ~species, values = ~registros, type = 'pie',
+        textposition = 'inside',
+        insidetextfont = list(color = '#e5f5f9'),
+        hoverinfo = "label+value",
+        showlegend = TRUE,
+        marker = list (colors = pal_plotly),
+        marker = list(line = list(color = "#000", width = 2))
+) %>%
+  layout(title = 'Registro de orquídeas en Costa Rica') %>%
+  config(locale = "es")
+
+
+# 4. Capa leaflet agrupada (clustered) 
+
+# Creación de conjunto de datos con la cantidad de especies por provincia
+
+orquideas_especies <-
+  provincias %>%
+  st_join(orq) %>%
+  group_by(provincia.x) %>%
+  summarize(especies = n())
+
+# Paleta de colores
+
+especies_paleta <-
+  colorNumeric(palette = "YlGnBu",
+               domain = orquideas_especies$especies,
+               na.color = "transparent")
+
+# Mapa de registros de presencia
+
+orq %>%
+  select(species, 
+         canton,
+         stateProvince,
+         eventDate) %>%
+  leaflet() %>%
+  setView(lng = -84.0, lat = 10.0, zoom = 8) %>%
+  addProviderTiles(providers$OpenStreetMap.Mapnik, group = "OpenStreetMap") %>%
+  addProviderTiles(providers$Stamen.TonerLite, group = "Stamen Toner Lite") %>%
+  addPolygons(
+    data = orquideas_especies,
+    fillColor = ~ especies_paleta(orquideas_especies$especies),
+    fillOpacity = 0.3,
+    stroke = TRUE,
+    color = "#000000",
+    weight = 2,
+    group = "Registros por provincias" 
+  ) %>%
+  addCircleMarkers(
+    stroke = F,
+    radius = 3,
+    fillColor = "blue",
+    fillOpacity = 1,
+    popup = paste(
+      paste(
+        "<strong>Especie: </strong>", 
+        orq$species),
+      paste(
+        "<strong>Provincia: </strong>", 
+        orq$stateProvince),
+      paste(
+        "<strong>Cantón: </strong>", 
+        orq$canton),
+      paste(
+        "<strong>Fecha: </strong>", 
+        orq$eventDate),
+      sep = '<br/>'
+    ),
+    clusterOptions = markerClusterOptions(),
+    group = "Registros de orquideas"
+  ) %>%
+  addLayersControl(
+    baseGroups = c("Stamen Toner Lite", "OpenStreetMap"),
+    overlayGroups = c("Registros por provincias", "Registros de orquideas")
+  ) %>%
+  addResetMapButton() %>%
+  addSearchOSM() %>%
+  addMouseCoordinates() %>%
+  addScaleBar(position = "bottomleft", options = scaleBarOptions(imperial = FALSE)) %>%
+  addMiniMap(
+    tiles = providers$OpenStreetMap.Mapnik,
+    position = "bottomleft",
+    toggleDisplay = TRUE
+  ) %>%
+  addLegend(
+    position = "bottomright",
+    values = orquideas_especies$especies,
+    pal = especies_paleta,
+    group = "Registros por provincias",
+    title = "Cantidad de <br>especies de<br>orquideas")
+
+# Mapa leaflet con capa raster
+
+# Creación capa raster
+
+# Obtención de la capa de altitud
+
+alt <-
+  raster::getData(
+    "worldclim",
+    var = "alt",
+    res = 0.5,
+    lon = -84,
+    lat = 10
+  )
+
+# Reproyección de la capa de altitud al sistema de coordenadas correspondiente
+
+alt <-
+  alt %>%
+  projectRaster(crs = 4326)
+
+# Recorte de la capa de altitud a las provincias de CR
+
+altitud <-
+  alt %>%
+  crop(provincias) %>%
+  mask(provincias)
+
+# Plantilla de raster
+
+raster_plantilla <-
+  altitud %>%
+  aggregate(fact = 11)
+
+# Rasterización
+
+orquideas_raster_registros <-
+  rasterize(orq,
+            raster_plantilla,
+            field = 1,
+            fun = "count")
+
+
+# Paleta de colores
+
+pal_raster <-
+  colorNumeric(
+    c("#d9f0a3", "#addd8e", "#78c679", "#41ab5d", "#238443", "#005a32"),
+    values(orquideas_raster_registros), 
+    na.color = "transparent"
+  )
+
+# Mapa de registros de presencia
+
+leaflet() %>%
+  setView(lng = -84.0, lat = 10.0, zoom = 8) %>%
+  addProviderTiles(providers$OpenStreetMap.Mapnik, group = "OpenStreetMap") %>%
+  addProviderTiles(providers$Stamen.TonerLite, group = "Stamen Toner Lite") %>%
+  addPolygons(
+    data = provincias,
+    fillColor = FALSE,
+    fillOpacity = 0,
+    stroke = TRUE,
+    color = "#000000",
+    weight = 2,
+    group = "Delimitación por provincia" 
+  ) %>%
+  addRasterImage(
+    orquideas_raster_registros,
+    colors = pal_raster,
+    opacity = 1,
+    group = "Registros de orquídeas"
+  ) %>%
+  addLayersControl(
+    baseGroups = c("Stamen Toner Lite", "OpenStreetMap"),
+    overlayGroups = c("Delimitación por provincia", "Registros de orquídeas")
+  ) %>%
+  addResetMapButton() %>%
+  addSearchOSM() %>%
+  addMouseCoordinates() %>%
+  addScaleBar(position = "bottomleft", options = scaleBarOptions(imperial = FALSE)) %>%
+  addMiniMap(
+    tiles =providers$OpenStreetMap.Mapnik ,
+    position = "bottomleft",
+    toggleDisplay = TRUE
+  ) %>% 
+  addLegend(
+    pal = pal_raster,
+    values = values(orquideas_raster_registros),
+    position = "bottomright",
+    title = "Cantidad de <br>especies<br>por celda",
+    group = "Registros-Orquideas"
+  )
