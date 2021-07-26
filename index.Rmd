@@ -66,7 +66,7 @@ orq <-
 
 ```
 
-Registros de presencia
+Gráfico y Tabla
 =======================================================================
 
 column {data-width=70}
@@ -192,9 +192,7 @@ row {data-height=10}
 **Curso:** Procesamiento de Datos Geográficos (GF0604) Grupo 1.
 
 
-Mapa agrupado con los registros de presencia de las orquídeas en Costa Rica
-
-Mapa agrupado (clustered) de registros de presencia
+Registros de presencia
 =======================================================================
 
 ```{r map, message=FALSE, warning=FALSE}
@@ -279,7 +277,7 @@ orq %>%
 ```
 
 
-Mapa raster de la cantidad de especies por celda
+Especies por celda
 ================================================================================
 ```{r}
 # Creación capa raster
