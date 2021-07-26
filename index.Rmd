@@ -117,7 +117,7 @@ valueBox(value = nrow(inp2),
 row {data-height=400}
 -----------------------------------------------------------------------
 
-###  Gráfico pastel: especies por cantidad de registros
+###  Gráfico
 
 ```{r grafico, message=FALSE, warning=FALSE}
 
@@ -164,7 +164,7 @@ plot_ly(conjunto_orquideas, labels =  ~species, values = ~registros, type = 'pie
 ```
 
 
-### Tabla de registros de presencia
+### Tabla
 
 ```{r datatable, warning=FALSE, message=FALSE}
 
